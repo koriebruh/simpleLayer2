@@ -1,0 +1,57 @@
+syntax = "proto3";
+package layer2proto;
+option go_package = "/layer2";
+
+service Layer2Service {
+  // Unary RPC for sending a single transaction
+  rpc SubmitTransaction (TransactionRequest) returns (TransactionResponse);
+
+  // Server-side streaming for monitoring batch status
+  rpc MonitorBatchStatus (BatchStatusRequest) returns (stream BatchStatusResponse);
+
+  // Unary RPC to request batch processing manually (if needed)
+  rpc TriggerBatchProcessing (BatchProcessingRequest) returns (BatchProcessingResponse);
+}
+
+// Message to represent a single transaction
+message TransactionRequest {
+  string transaction_id = 1;        // Unique ID for the transaction
+  string sender = 2;               // Sender's address
+  string receiver = 3;             // Receiver's address
+  string data = 4;                 // Encoded transaction data
+  int64 amount = 5;                // Amount in smallest unit
+  string timestamp = 6;            // ISO 8601 timestamp
+}
+
+// Response for a single transaction submission
+message TransactionResponse {
+  string transaction_id = 1;       // The same ID of the submitted transaction
+  string status = 2;               // Status of the transaction (e.g., "success", "failed")
+  string message = 3;              // Additional details or error messages
+}
+
+// Request for monitoring batch status
+message BatchStatusRequest {
+  string batch_id = 1;             // ID of the batch to monitor
+}
+
+// Response for batch status updates
+message BatchStatusResponse {
+  string batch_id = 1;             // The ID of the batch being monitored
+  string status = 2;               // Current status (e.g., "pending", "processing", "completed")
+  string progress = 3;             // Progress percentage or details
+  string message = 4;              // Additional details or information
+}
+
+// Request to trigger batch processing manually
+message BatchProcessingRequest {
+  string trigger_by = 1;           // Optional: who triggered this (e.g., "user", "system")
+}
+
+// Response for triggering batch processing
+message BatchProcessingResponse {
+  string batch_id = 1;             // Unique ID for the created batch
+  int32 total_transactions = 2;    // Number of transactions in the batch
+  string status = 3;               // Status of the batch (e.g., "processing", "completed")
+  string message = 4;              // Additional details or error messages
+}
