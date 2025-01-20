@@ -23,21 +23,13 @@ type Layer2Handler struct {
 	pb.UnimplementedLayer2ServiceServer
 	mu          sync.Mutex
 	transaction []*pb.TransactionRequest
+	*ethclient.Client
 }
 
 func (l *Layer2Handler) SubmitTransaction(ctx context.Context, req *pb.TransactionRequest) (*pb.TransactionResponse, error) {
 	log.Info(fmt.Sprintf("Incoming Request %v", req))
 
-	// logic check before we save in temp storage
-	client, err := ethclient.DialContext(ctx, "https://mainnet.infura.io/v3/7108f6b019944d2082df7b667e6b1f4a")
-	if err != nil {
-		return &pb.TransactionResponse{
-			TransactionId: req.TransactionId,
-			Status:        "failed",
-			Message:       "Internal Server Error",
-		}, err
-	}
-
+	client := l.Client
 	pubKey, err := crypto.UnmarshalPubkey([]byte(req.Sender))
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "Invalid sender public key: %v", err)
@@ -58,16 +50,72 @@ func (l *Layer2Handler) SubmitTransaction(ctx context.Context, req *pb.Transacti
 	}, nil
 }
 
-func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb.Layer2Service_MonitorBatchStatusServer) error {
-	//TODO implement me
-	panic("implement me")
+func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb.Layer2Service_MonitorBatchStatusServer) (*pb.BatchStatusResponse, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	file, err := os.Open("store/transaction_pool.txt")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Gagal membuka transaction pool: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		// Cek jika context sudah dibatalkan
+		if stream.Context().Err() != nil {
+			return nil, status.Errorf(codes.Canceled, "Stream dibatalkan oleh client")
+		}
+
+		line := scanner.Text()
+		var tx pb.TransactionRequest
+		if err := json.Unmarshal([]byte(line), &tx); err != nil {
+			continue
+		}
+
+		// Kirim status untuk setiap transaksi
+		status := &pb.BatchStatusResponse{
+			BatchId:  req.BatchId,
+			Status:   "pending",
+			Progress: tx.TransactionId,
+			Message:  fmt.Sprintf("Transaction %s is pending", tx.TransactionId),
+		}
+
+		if err := stream.Send(status); err != nil {
+			return nil, fmt.Errorf("Failed to send batch status: %e\", err")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, status.Errorf(codes.Internal, "Error reading transaction pool: %e", err)
+	}
+
+	return nil, nil
 }
 
 func (l *Layer2Handler) TriggerBatchProcessing(ctx context.Context, req *pb.BatchProcessingRequest) (*pb.BatchProcessingResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	client := l.Client
 
-	// do read file
+	systemPrivateKey := os.Getenv("SYSTEM_PRIVATE_KEY")
+	if systemPrivateKey == "" {
+		return nil, status.Errorf(codes.Internal, "System private key tidak ditemukan")
+	}
+
+	err := batchInsert(ctx, client, systemPrivateKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Gagal memproses batch: %v", err)
+	}
+
+	if err := cleanTransactionPool(); err != nil {
+		log.Warn("Gagal membersihkan transaction pool", "error", err)
+	}
+
+	return &pb.BatchProcessingResponse{
+		BatchId: req.TriggerBy,
+		Status:  "success",
+		Message: "Batch berhasil diproses",
+	}, nil
 
 }
 
@@ -204,6 +252,11 @@ func batchInsert(ctx context.Context, client *ethclient.Client, privateKeyHex st
 	}
 
 	return nil
+}
+
+// cleanTransactionPool - fungsi helper untuk membersihkan transaction pool
+func cleanTransactionPool() error {
+	return os.WriteFile("store/transaction_pool.txt", []byte(""), 0644)
 }
 
 func main() {
