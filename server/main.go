@@ -115,25 +115,50 @@ func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb
 func (l *Layer2Handler) TriggerBatchProcessing(ctx context.Context, req *pb.BatchProcessingRequest) (*pb.BatchProcessingResponse, error) {
 	client := l.Client
 
-	// Original private key string
+	// Private key asli (dengan prefix 0x)
 	systemPrivateKey := "0xbeda603dae5f7fa6cf6235c27f160ad80e1fa5faf8722519e07e577681f6cf40"
 
-	// Remove the 0x prefix if present
+	// Hapus prefix "0x" jika ada
 	systemPrivateKey = strings.TrimPrefix(systemPrivateKey, "0x")
 
-	// Validate the hex string for private key
+	// Hapus spasi yang tidak diinginkan
+	systemPrivateKey = strings.TrimSpace(systemPrivateKey)
+
+	// Log private key yang telah dibersihkan dan panjangnya
+	log2.Printf("Cleaned Private Key: %s", systemPrivateKey)
+	log2.Printf("Private Key Length: %d", len(systemPrivateKey))
+
+	// Validasi hex string untuk private key
 	if !isValidHex(systemPrivateKey) {
-		return nil, fmt.Errorf("invalid private key: contains invalid characters or is the wrong length")
+		return nil, fmt.Errorf("private key tidak valid: mengandung karakter yang tidak valid atau panjangnya salah")
 	}
 
-	// Parse the private key from the valid hex string
+	// Debug: log string private key untuk memastikan itu adalah hex yang valid
+	log2.Printf("Private Key (Hex): %s", systemPrivateKey)
+
+	// Pastikan bahwa hex string yang diterima valid
+	decodedKey, err := hex.DecodeString(systemPrivateKey)
+	if err != nil {
+		log2.Printf("Gagal mendekodekan hex: %v", err)
+		return nil, fmt.Errorf("gagal mendekodekan hex untuk private key: %v", err)
+	}
+
+	// Debug: log decoded key dalam format byte untuk melihat apakah sudah benar
+	log2.Printf("Decoded Key (Bytes): %v", decodedKey)
+
+	// Parsing private key dari string hex yang valid
 	privKey, err := crypto.HexToECDSA(systemPrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("private key system failed: %v", err)
+		return nil, fmt.Errorf("gagal memproses private key: %v", err)
 	}
 
-	privKeyHex := privKey.D.String()
+	// Mengonversi private key menjadi format hex yang benar
+	privKeyHex := hex.EncodeToString(privKey.D.Bytes()) // Menggunakan D.Bytes() dan encode ke hex
 
+	// Debugging: log private key dalam format hex
+	log2.Printf("Private Key Hex: %s", privKeyHex)
+
+	// Lanjutkan dengan proses batch insertion
 	err = batchInsert(ctx, client, privKeyHex)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Gagal memproses batch: %v", err)
@@ -148,7 +173,25 @@ func (l *Layer2Handler) TriggerBatchProcessing(ctx context.Context, req *pb.Batc
 		Status:  "success",
 		Message: "Batch berhasil diproses",
 	}, nil
+}
 
+// Fungsi untuk memvalidasi sebuah string hex (hanya karakter hexadecimal dan panjang 64)
+func isValidHex(hexStr string) bool {
+	// Pastikan string memiliki panjang tepat 64 karakter
+	if len(hexStr) != 64 {
+		log2.Printf("Panjang hex tidak valid: Diharapkan 64 karakter, tapi didapat %d", len(hexStr))
+		return false
+	}
+
+	// Cek apakah string hanya mengandung karakter hex yang valid
+	for _, c := range hexStr {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			log2.Printf("Karakter tidak valid '%c' ditemukan dalam private key", c)
+			return false
+		}
+	}
+
+	return true
 }
 
 // filter checking insert User

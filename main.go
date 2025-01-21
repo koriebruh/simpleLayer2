@@ -84,7 +84,7 @@ func triggerBatchProcessing(client pb.Layer2ServiceClient) {
 
 	res, err := client.TriggerBatchProcessing(ctx, req)
 	if err != nil {
-		log.Fatalf("Error TriggerBatchProcessing: %v", err)
+		log.Fatalf("Error TriggerBatchProcessing Kontol si: %v", err)
 	}
 
 	log.Printf("TriggerBatchProcessing Response: %v", res)
