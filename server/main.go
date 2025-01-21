@@ -200,7 +200,7 @@ func filter(ctx context.Context, c *ethclient.Client, sender ecdsa.PublicKey, va
 	address := crypto.PubkeyToAddress(sender)
 	balanceRN, err := c.BalanceAt(ctx, address, nil)
 	if err != nil {
-		return status.Errorf(codes.Internal, "Failed to retrieve balance: %v", err)
+		return status.Errorf(codes.Internal, "failed to retrieve balance: %v", err)
 	}
 
 	// validate

@@ -30,7 +30,7 @@ func main() {
 	req := &pb.TransactionRequest{
 		TransactionId: "12345",
 		Sender:        "0x04b631a8c2fda7d3c00254729abddcb3ddcb93c9698f4e35960c702b4895ee0b453e234ce278e56d39c647352f706a59cc8690d953beb061ed2955dead20018517",
-		Receiver:      "0x0D0475Cfa45b5E8C4b21B4F84A4322f17D77c2a2",
+		Receiver:      "0x5eCB7c9088F4a05807d213BEC7E89e328fb47947",
 		Amount:        1000, // Uang dalam wei
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
