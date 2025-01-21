@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/cockroachdb/errors/grpc/status"
@@ -19,6 +20,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -35,18 +37,27 @@ func NewLayer2Handler(unimplementedLayer2ServiceServer pb.UnimplementedLayer2Ser
 
 func (l *Layer2Handler) SubmitTransaction(ctx context.Context, req *pb.TransactionRequest) (*pb.TransactionResponse, error) {
 	log.Info(fmt.Sprintf("Incoming Request %v", req))
-
 	client := l.Client
-	pubKey, err := crypto.UnmarshalPubkey([]byte(req.Sender))
+
+	publicKeyHex := strings.TrimPrefix(req.Sender, "0x")
+	publicKeyBytes, err := hex.DecodeString(publicKeyHex)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid sender public key: %v", err)
+		return nil, fmt.Errorf("failed to decode public key: %v", err)
 	}
 
-	if err = filter(ctx, client, *pubKey, big.NewInt(req.Amount)); err != nil {
+	// Mengonversi ke public key ECDSA
+	pubKey, err := crypto.UnmarshalPubkey(publicKeyBytes)
+	if err != nil {
+		log2.Fatalf("Error unmarshalling public key: %v", err)
 		return nil, err
 	}
 
-	if err = addTxPool(req); err != nil {
+	amount := new(big.Int).SetInt64(req.Amount)
+	if err := filter(ctx, client, *pubKey, amount); err != nil {
+		return nil, err
+	}
+
+	if err := addTxPool(req); err != nil {
 		return nil, err
 	}
 
@@ -104,9 +115,26 @@ func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb
 func (l *Layer2Handler) TriggerBatchProcessing(ctx context.Context, req *pb.BatchProcessingRequest) (*pb.BatchProcessingResponse, error) {
 	client := l.Client
 
-	systemPrivateKey := "0x7a57a520c36ee7ebd09286a15742a27b9b2ad7ae0e56cd6e6a8ff94e1128676b"
+	// Original private key string
+	systemPrivateKey := "0xbeda603dae5f7fa6cf6235c27f160ad80e1fa5faf8722519e07e577681f6cf40"
 
-	err := batchInsert(ctx, client, systemPrivateKey)
+	// Remove the 0x prefix if present
+	systemPrivateKey = strings.TrimPrefix(systemPrivateKey, "0x")
+
+	// Validate the hex string for private key
+	if !isValidHex(systemPrivateKey) {
+		return nil, fmt.Errorf("invalid private key: contains invalid characters or is the wrong length")
+	}
+
+	// Parse the private key from the valid hex string
+	privKey, err := crypto.HexToECDSA(systemPrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("private key system failed: %v", err)
+	}
+
+	privKeyHex := privKey.D.String()
+
+	err = batchInsert(ctx, client, privKeyHex)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Gagal memproses batch: %v", err)
 	}
@@ -267,9 +295,9 @@ func main() {
 
 	ctx := context.Background()
 
-	//var ganacheURL = "http://127.0.0.1:8545"
-	var infraURL = "https://mainnet.infura.io/v3/7108f6b019944d2082df7b667e6b1f4a"
-	ethClient, err := ethclient.DialContext(ctx, infraURL)
+	//var URL = "http://127.0.0.1:8545"
+	var URL = "https://sepolia.infura.io/v3/7108f6b019944d2082df7b667e6b1f4a"
+	ethClient, err := ethclient.DialContext(ctx, URL)
 	if err != nil {
 		log2.Fatalf("Failed to connect to Ethereum client: %e\n", err)
 	}
@@ -294,10 +322,3 @@ func main() {
 		log2.Fatalf("Failed to serve gRPC server: %v", err)
 	}
 }
-
-/*
-	System -->
-	PRIVATE KEY :  0x7a57a520c36ee7ebd09286a15742a27b9b2ad7ae0e56cd6e6a8ff94e1128676b
-	PUBLIC KEY :  0x04564f4c6b713119398b3066ea5810c81fed207dec097538d6e032c9779fd72b3f42821fc7913a9ae46f7d7888db0a053d125689ccdb3040ae8bf9cf79402bcfc4
-	ADDRESS :  0x749810Ed1AC6e37B394E1F286720CFaF8F3B39A6
-*/
