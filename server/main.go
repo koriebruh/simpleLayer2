@@ -13,8 +13,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	pb "github.com/koriebruh/simpleLayer2/proto/layer2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	log2 "log"
 	"math/big"
+	"net"
 	"os"
 	"sync"
 )
@@ -24,6 +27,10 @@ type Layer2Handler struct {
 	mu          sync.Mutex
 	transaction []*pb.TransactionRequest
 	*ethclient.Client
+}
+
+func NewLayer2Handler(unimplementedLayer2ServiceServer pb.UnimplementedLayer2ServiceServer, mu sync.Mutex, transaction []*pb.TransactionRequest, client *ethclient.Client) *Layer2Handler {
+	return &Layer2Handler{UnimplementedLayer2ServiceServer: unimplementedLayer2ServiceServer, mu: mu, transaction: transaction, Client: client}
 }
 
 func (l *Layer2Handler) SubmitTransaction(ctx context.Context, req *pb.TransactionRequest) (*pb.TransactionResponse, error) {
@@ -50,13 +57,13 @@ func (l *Layer2Handler) SubmitTransaction(ctx context.Context, req *pb.Transacti
 	}, nil
 }
 
-func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb.Layer2Service_MonitorBatchStatusServer) (*pb.BatchStatusResponse, error) {
+func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb.Layer2Service_MonitorBatchStatusServer) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	file, err := os.Open("store/transaction_pool.txt")
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Gagal membuka transaction pool: %v", err)
+		return status.Errorf(codes.Internal, "Gagal membuka transaction pool: %v", err)
 	}
 	defer file.Close()
 
@@ -65,7 +72,7 @@ func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb
 	for scanner.Scan() {
 		// Cek jika context sudah dibatalkan
 		if stream.Context().Err() != nil {
-			return nil, status.Errorf(codes.Canceled, "Stream dibatalkan oleh client")
+			return status.Errorf(codes.Canceled, "Stream dibatalkan oleh client")
 		}
 
 		line := scanner.Text()
@@ -83,24 +90,21 @@ func (l *Layer2Handler) MonitorBatchStatus(req *pb.BatchStatusRequest, stream pb
 		}
 
 		if err := stream.Send(status); err != nil {
-			return nil, fmt.Errorf("Failed to send batch status: %e\", err")
+			return fmt.Errorf("Failed to send batch status: %e\", err")
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, status.Errorf(codes.Internal, "Error reading transaction pool: %e", err)
+		return status.Errorf(codes.Internal, "Error reading transaction pool: %e", err)
 	}
 
-	return nil, nil
+	return nil
 }
 
 func (l *Layer2Handler) TriggerBatchProcessing(ctx context.Context, req *pb.BatchProcessingRequest) (*pb.BatchProcessingResponse, error) {
 	client := l.Client
 
-	systemPrivateKey := os.Getenv("SYSTEM_PRIVATE_KEY")
-	if systemPrivateKey == "" {
-		return nil, status.Errorf(codes.Internal, "System private key tidak ditemukan")
-	}
+	systemPrivateKey := "0x7a57a520c36ee7ebd09286a15742a27b9b2ad7ae0e56cd6e6a8ff94e1128676b"
 
 	err := batchInsert(ctx, client, systemPrivateKey)
 	if err != nil {
@@ -261,4 +265,39 @@ func cleanTransactionPool() error {
 
 func main() {
 
+	ctx := context.Background()
+
+	//var ganacheURL = "http://127.0.0.1:8545"
+	var infraURL = "https://mainnet.infura.io/v3/7108f6b019944d2082df7b667e6b1f4a"
+	ethClient, err := ethclient.DialContext(ctx, infraURL)
+	if err != nil {
+		log2.Fatalf("Failed to connect to Ethereum client: %e\n", err)
+	}
+
+	layer2Handler := NewLayer2Handler(
+		pb.UnimplementedLayer2ServiceServer{},
+		sync.Mutex{},
+		[]*pb.TransactionRequest{},
+		ethClient)
+
+	//GRPC SERVER
+	server := grpc.NewServer()
+	pb.RegisterLayer2ServiceServer(server, layer2Handler)
+
+	listener, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log2.Fatalf("Failed to listen on port 50051: %v", err)
+	}
+
+	log2.Println("Server gRPC berjalan pada port 50051...")
+	if err := server.Serve(listener); err != nil {
+		log2.Fatalf("Failed to serve gRPC server: %v", err)
+	}
 }
+
+/*
+	System -->
+	PRIVATE KEY :  0x7a57a520c36ee7ebd09286a15742a27b9b2ad7ae0e56cd6e6a8ff94e1128676b
+	PUBLIC KEY :  0x04564f4c6b713119398b3066ea5810c81fed207dec097538d6e032c9779fd72b3f42821fc7913a9ae46f7d7888db0a053d125689ccdb3040ae8bf9cf79402bcfc4
+	ADDRESS :  0x749810Ed1AC6e37B394E1F286720CFaF8F3B39A6
+*/
